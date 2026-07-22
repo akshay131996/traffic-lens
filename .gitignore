@@ -1,0 +1,18 @@
+# large downloaded assets / regenerable weights (auto-fetched by the scripts on first run)
+*.mp4
+*.pt
+*.onnx
+bus.jpg
+
+# auto-labeling output (regenerate via autolabel.py)
+autolabel_dataset/
+
+# python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.ipynb_checkpoints/
+
+# secrets
+.env
