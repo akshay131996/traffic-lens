@@ -3,6 +3,10 @@
 Pipeline: YOLO detections -> ByteTrack IDs -> line-crossing counts -> annotated video.
 Speed needs real-world calibration (--calib), explained in the README/notebook.
 
+The core logic lives in `process_video()` so both this CLI and `app.py` share one
+implementation — see `run_all_colab.ipynb` for the calibrated run, the ByteTrack
+parameter sweep, and everything else exercising this function on real data.
+
 Demo on a bundled highway video (auto-downloads, ~100 frames on CPU ≈ 2 min):
     python track_count_speed.py --max-frames 100
 
@@ -48,32 +52,43 @@ class ViewTransformer:
         return cv2.perspectiveTransform(pts, self.m).reshape(-1, 2)
 
 
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--source", default=None, help="video path (default: bundled demo video)")
-    ap.add_argument("--model", default="yolo26n.pt")
-    ap.add_argument("--max-frames", type=int, default=0, help="0 = whole video")
-    ap.add_argument("--conf", type=float, default=0.3)
-    ap.add_argument("--calib", default=None,
-                    help="JSON with source_px (4 image points) + target_m (same 4 in meters) "
-                         "-> enables speed estimation")
-    args = ap.parse_args()
+def process_video(
+    source: str,
+    output_path: str,
+    model: YOLO = None,
+    model_name: str = "yolo26n.pt",
+    conf: float = 0.3,
+    max_frames: int = 0,
+    calib: dict | None = None,
+    line_y_frac: float = 0.5,
+    track_activation_threshold: float = 0.25,
+    lost_track_buffer: int = 30,
+    progress_every: int = 25,
+    verbose: bool = True,
+) -> dict:
+    """Run the detect->track->count(+speed) pipeline on one video.
 
-    OUT.mkdir(exist_ok=True)
-    source = args.source
-    if source is None:
-        from supervision.assets import VideoAssets, download_assets
-        source = download_assets(VideoAssets.VEHICLES)
-        print(f"using demo video: {source}")
+    `calib`, if given, is {"source_px": [[x,y],...], "target_m": [[x,y],...]} (4+ points)
+    -- the same format as calib_demo.json. `line_y_frac` places the counting line at that
+    fraction of the frame height (0.5 = middle); pass whatever matches your camera angle.
+    `track_activation_threshold`/`lost_track_buffer` are ByteTrack's tunables, exposed so
+    a caller can sweep them (see the notebook's ID-switch experiment).
 
-    model = load_model(args.model)
+    Returns a stats dict: in_count, out_count, total_unique_ids, output_path.
+    """
+    if model is None:
+        model = load_model(model_name)
+
     info = sv.VideoInfo.from_video_path(source)
     fps = info.fps
 
-    tracker = sv.ByteTrack(frame_rate=fps)
-    # Count line across the middle of the frame; move it to match your camera angle.
-    line = sv.LineZone(start=sv.Point(0, info.height // 2),
-                       end=sv.Point(info.width, info.height // 2))
+    tracker = sv.ByteTrack(
+        frame_rate=fps,
+        track_activation_threshold=track_activation_threshold,
+        lost_track_buffer=lost_track_buffer,
+    )
+    line_y = int(info.height * line_y_frac)
+    line = sv.LineZone(start=sv.Point(0, line_y), end=sv.Point(info.width, line_y))
 
     box_ann = sv.BoxAnnotator(thickness=2)
     label_ann = sv.LabelAnnotator(text_scale=0.5)
@@ -81,23 +96,24 @@ def main():
     line_ann = sv.LineZoneAnnotator(text_scale=0.6)
 
     view = None
-    history = defaultdict(lambda: deque(maxlen=int(fps)))  # tracker_id -> recent (y_m, frame)
-    if args.calib:
-        calib = json.loads(Path(args.calib).read_text())
+    if calib:
         view = ViewTransformer(np.array(calib["source_px"]), np.array(calib["target_m"]))
 
-    out_path = str(OUT / "annotated.mp4")
+    history = defaultdict(lambda: deque(maxlen=int(fps)))  # tracker_id -> recent (y_m, frame)
+    seen_ids = set()
+
     frames = sv.get_video_frames_generator(source)
-    with sv.VideoSink(out_path, video_info=info) as sink:
+    with sv.VideoSink(output_path, video_info=info) as sink:
         for idx, frame in enumerate(frames):
-            if args.max_frames and idx >= args.max_frames:
+            if max_frames and idx >= max_frames:
                 break
 
-            result = model(frame, conf=args.conf, verbose=False)[0]
+            result = model(frame, conf=conf, verbose=False)[0]
             det = sv.Detections.from_ultralytics(result)
             det = det[np.isin(det.class_id, VEHICLE_CLASSES)]
             det = tracker.update_with_detections(det)
             line.trigger(det)
+            seen_ids.update(det.tracker_id.tolist())
 
             labels = []
             anchors = det.get_anchors_coordinates(sv.Position.BOTTOM_CENTER)
@@ -118,13 +134,53 @@ def main():
             frame = line_ann.annotate(frame, line_counter=line)
             sink.write_frame(frame)
 
-            if idx % 25 == 0:
+            if verbose and idx % progress_every == 0:
                 print(f"frame {idx}: {len(det)} vehicles tracked  "
                       f"(in={line.in_count} out={line.out_count})")
 
-    print(f"\ncounts: in={line.in_count} out={line.out_count}")
-    print(f"annotated video -> {out_path}")
-    if view is None:
+    return {
+        "in_count": line.in_count,
+        "out_count": line.out_count,
+        "total_unique_ids": len(seen_ids),
+        "output_path": output_path,
+        "has_speed": view is not None,
+    }
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--source", default=None, help="video path (default: bundled demo video)")
+    ap.add_argument("--model", default="yolo26n.pt")
+    ap.add_argument("--max-frames", type=int, default=0, help="0 = whole video")
+    ap.add_argument("--conf", type=float, default=0.3)
+    ap.add_argument("--calib", default=None,
+                    help="JSON with source_px (4 image points) + target_m (same 4 in meters) "
+                         "-> enables speed estimation")
+    ap.add_argument("--line-y-frac", type=float, default=0.5,
+                    help="counting line position as a fraction of frame height")
+    args = ap.parse_args()
+
+    OUT.mkdir(exist_ok=True)
+    source = args.source
+    if source is None:
+        from supervision.assets import VideoAssets, download_assets
+        source = download_assets(VideoAssets.VEHICLES)
+        print(f"using demo video: {source}")
+
+    calib = json.loads(Path(args.calib).read_text()) if args.calib else None
+    stats = process_video(
+        source=source,
+        output_path=str(OUT / "annotated.mp4"),
+        model_name=args.model,
+        conf=args.conf,
+        max_frames=args.max_frames,
+        calib=calib,
+        line_y_frac=args.line_y_frac,
+    )
+
+    print(f"\ncounts: in={stats['in_count']} out={stats['out_count']}")
+    print(f"annotated video -> {stats['output_path']}")
+    if not stats["has_speed"]:
         print("note: no --calib given, so no speeds. See README 'Calibrating for speed'.")
 
 
