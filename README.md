@@ -86,140 +86,168 @@ Extract frames from any video for labeling:
 
 ## Results
 
-> ⏳ **These are run-1 numbers.** A corrected run (v2 notebook: valid remapped baseline,
-> measured calibration, 1280 px inference, 50 epochs) is in progress — see
-> [LEARNINGS.md](LEARNINGS.md) for what changed and why. The invalid-baseline section
-> below is kept deliberately, because the bug is more instructive than the number.
+From one end-to-end run of [`run_all_colab.ipynb`](run_all_colab.ipynb) on an **NVIDIA
+RTX 4000 Ada (20 GB)**, Ultralytics 8.4.104 / torch 2.4.1+cu124. Raw numbers:
+[`outputs/run2_results.json`](outputs/run2_results.json).
 
-All numbers below come from one end-to-end run of
-[`run_all_colab.ipynb`](run_all_colab.ipynb) (committed **with its outputs**, so you can
-read the actual run without re-executing it) on an **NVIDIA RTX 4000 Ada (20 GB)**,
-Ultralytics 8.4.104 / torch 2.4.1+cu124.
+> This is **run 2**. Run 1 finished without a single error and was wrong in five places —
+> a baseline that measured label-space mismatch, speeds off by ~8×, a metric that couldn't
+> answer its own question. [**LEARNINGS.md**](LEARNINGS.md) documents each one and how it
+> was caught. The corrections below are the point of this project.
 
 ### VisDrone fine-tune
 
 YOLO26n fine-tuned on [VisDrone2019-DET](https://github.com/VisDrone/VisDrone-Dataset)
-(6,471 train / 548 val images, 10 classes), 20 epochs, imgsz 640, batch 16, ~23 min:
+(6,471 train / 548 val, 10 classes), 50 epochs, imgsz 640, batch 16, ~60 min:
 
-| metric | value |
-|---|---|
-| mAP50 | **0.246** |
-| mAP50-95 | **0.134** |
-| precision | 0.364 |
-| recall | 0.292 |
-
-Weights: [`yolo26n_visdrone_finetuned.pt`](yolo26n_visdrone_finetuned.pt) (5.4 MB) ·
-per-epoch metrics: [`outputs/visdrone/results.csv`](outputs/visdrone/results.csv) ·
-full training config: [`outputs/visdrone/args.yaml`](outputs/visdrone/args.yaml)
+| metric | 20 epochs (run 1) | **50 epochs (run 2)** |
+|---|---|---|
+| mAP50 | 0.246 | **0.280** |
+| mAP50-95 | 0.134 | **0.154** |
+| precision | 0.364 | **0.402** |
+| recall | 0.292 | **0.308** |
 
 ![Training curves](outputs/visdrone/results.png)
 
-**The run wasn't finished learning.** Both val losses are still declining and mAP is
-still climbing at epoch 20 — training stopped because the 20-epoch cosine schedule
-decayed the LR to ~4e-5, not because the model plateaued. Train and val losses track each
-other closely throughout (no overfitting), so a longer schedule would very likely score
-higher. 20 epochs was a deliberate budget choice, not a converged result.
+**This one actually converged.** mAP50 over the last three epochs: 0.2801 → 0.2790 →
+0.2804 — flat. Run 1 stopped at 20 epochs with the curve still climbing, purely because
+its cosine schedule had decayed the LR to zero; that was a budget artifact being reported
+as a result. The extra 30 epochs bought +3.4 pp mAP50, and the curve says there's little
+left on the table without a bigger model or higher resolution.
 
-For reference, absolute numbers on VisDrone are *supposed* to look low — it's drone
-imagery full of tiny, densely-packed objects, and this is the smallest model in the
-family. Here's what it actually predicts:
+Weights: [`yolo26n_visdrone_finetuned.pt`](yolo26n_visdrone_finetuned.pt) (5.4 MB) ·
+per-epoch metrics: [`outputs/visdrone/results.csv`](outputs/visdrone/results.csv)
 
 ![VisDrone predictions](outputs/visdrone/val_batch0_pred.jpg)
 
-### ⚠️ The baseline in `visdrone_finetune_summary.json` is invalid — here's why
+### Was fine-tuning worth it? (a baseline that's actually valid)
 
-The notebook also evaluated the **COCO-pretrained** YOLO26n on VisDrone val and recorded
-0.0174 mAP50, which would imply fine-tuning bought a ~14× improvement. **That comparison
-does not hold up, and the number should not be quoted.**
+Run 1 answered this with `YOLO("yolo26n.pt").val(data="VisDrone.yaml")` and got 0.0174
+mAP50 — a number that measured nothing, because `val()` matches predictions to ground
+truth **by class index**, and the COCO-pretrained model's index 4 (`airplane`) was being
+graded against VisDrone's index 4 (`van`).
 
-The giveaway is in the per-class breakdown of that eval, which lists:
+Run 2 remaps VisDrone ground truth into COCO's label space (`pedestrian`+`people`→person,
+`car`+`van`→car, `motor`→motorcycle, `bus`→bus, `truck`→truck, `bicycle`→bicycle), drops
+`tricycle`/`awning-tricycle` which have no COCO equivalent, and evaluates both models on
+the categories they genuinely share:
 
-```
-person, bicycle, car, motorcycle, airplane, bus, train, truck, boat, traffic light
-```
+| model | mAP50 | mAP50-95 |
+|---|---|---|
+| COCO-pretrained (remapped GT, shared classes) | 0.028 | 0.013 |
+| **Fine-tuned (shared classes)** | **0.320** | **0.176** |
 
-Those are **COCO's** class names. VisDrone's are `pedestrian, people, bicycle, car, van,
-truck, tricycle, awning-tricycle, bus, motor`. The evaluation scored COCO *class indices*
-against VisDrone *ground-truth indices* — so "airplane" predictions (COCO idx 4) were
-graded against VisDrone's **van** boxes, "train" (idx 6) against **tricycle**, "boat"
-(idx 8) against **bus**. Nine of the ten rows are comparing unrelated categories, and
-0.0174 mostly measures that mismatch rather than any domain gap.
+**≈11× improvement — and this comparison holds up.**
 
-The one pair that accidentally lines up semantically is index 0 — COCO *person* vs
-VisDrone *pedestrian* — and it scored **0.124 mAP50**, roughly 7× the bogus aggregate.
-That's the only interpretable signal in the baseline, and it suggests genuine zero-shot
-transfer is far better than 0.0174, while still well short of the fine-tuned model.
+The interesting part: fixing the label mapping moved the baseline from 0.0174 to only
+0.0276. The pretrained model really is near-useless on this data, so run 1's *conclusion*
+("fine-tuning helps enormously") was directionally right while its *measurement* was
+meaningless. Both facts are worth stating — a right answer from a broken method is still
+a broken method, and it only looked fine here by luck.
 
-A defensible baseline would require remapping VisDrone ground truth into COCO's label
-space (`pedestrian`+`people`→person, `car`+`van`→car, `motor`→motorcycle, `bus`→bus,
-`truck`→truck, `bicycle`→bicycle) and dropping the classes with no COCO equivalent
-(`tricycle`, `awning-tricycle`). That's left as future work — deliberately not papered
-over with a number I can't defend.
+Why the domain gap is that severe: VisDrone is shot from drone altitude, so objects are a
+handful of pixels — far smaller than anything in COCO's distribution. Scale, not just
+category vocabulary, is what breaks the pretrained model.
 
-**Takeaway:** a suspiciously catastrophic baseline is usually a bug in your evaluation,
-not a discovery about your model. Always check that your predictions and your ground
-truth live in the same label space before believing a comparison.
+*One asymmetry to note honestly:* the fine-tuned model must split `pedestrian` vs `people`
+and `car` vs `van`, while the baseline gets to lump each pair into one COCO class. The
+fine-tuned task is therefore *harder*, so if anything the 11× understates the gap.
+
+### Inference resolution: 640 vs 1280 px
+
+Same clip, same model, same tracker — only the inference size changed:
+
+| | 640 px | **1280 px** |
+|---|---|---|
+| detections / frame | 3.10 | **4.88** (+57%) |
+| mean track length | 47.8 frames | **81.3 frames** (+70%) |
+| unique IDs | 13 | 12 |
+| median speed | 124.1 km/h | 122.9 km/h |
+
+Read those together: **more detections per frame, yet *fewer* unique IDs and much longer
+tracks.** Higher resolution didn't just find extra vehicles — it stopped the tracker
+losing and re-issuing the ones it already had. On 4K footage the 640 px default shrinks a
+distant car to a few pixels, so it flickers in and out of detection and fragments into
+several short tracks.
+
+Visible in the output — 640 px on the left finds two vehicles, 1280 px finds five,
+including the truck under the gantry:
+
+| 640 px | 1280 px |
+|---|---|
+| ![640](outputs/media/annotated_frame_640.jpg) | ![1280](outputs/media/annotated_frame.jpg) |
 
 ### ByteTrack parameter sweep
 
-Same 200-frame clip, three tracker configurations
-([`outputs/bytetrack_sweep.json`](outputs/bytetrack_sweep.json)):
+Same 200-frame clip at 1280 px ([`outputs/bytetrack_sweep.json`](outputs/bytetrack_sweep.json)):
 
-| `track_activation_threshold` | `lost_track_buffer` | unique IDs | in / out |
-|---|---|---|---|
-| 0.50 | 10 | 7 | 2 / 1 |
-| 0.25 | 30 | 13 | 2 / 1 |
-| 0.10 | 60 | 14 | 2 / 1 |
+| `track_activation_threshold` | `lost_track_buffer` | unique IDs | detections/frame | mean track length |
+|---|---|---|---|---|
+| 0.50 | 10 | 8 | 4.28 | **106.9** |
+| 0.25 | 30 | 12 | 4.88 | 81.3 |
+| 0.10 | 60 | 12 | 4.92 | 82.0 |
 
-**What this does and doesn't show.** Unique-ID count is *not* an ID-switch metric:
-lowering the activation threshold admits more marginal detections, so some of the extra
-IDs are genuinely additional (distant, low-confidence) vehicles rather than a stable track
-being fragmented. Separating the two needs ground-truth track annotations and a proper
-MOTA/IDF1 evaluation, which this demo clip doesn't have. The stable in/out counts across
-all three settings are reassuring — the vehicles that actually cross the line are large
-and confidently detected, so the counter is insensitive to these knobs.
+Run 1 logged only the unique-ID column, which can't distinguish "the tracker fragmented
+one car into three" from "a lower threshold legitimately found three more cars". Logging
+detections/frame and track length alongside makes the two hypotheses predict different
+things, and the answer here is legible:
 
-### Speed calibration — estimated, and probably wrong
+- **0.50 → 0.25** raises detections/frame (4.28 → 4.88) *and* IDs (8 → 12) while mean
+  track length falls (106.9 → 81.3). So it's genuinely finding more vehicles, but the
+  extra ones are marginal detections forming shorter, flakier tracks — both effects at once.
+- **0.25 → 0.10** changes essentially nothing (+0.04 detections/frame, identical IDs).
+  The threshold has saturated; there's nothing left to admit.
 
-[`outputs/calib_demo.json`](outputs/calib_demo.json) maps an assumed 7 m × 30 m road
-quadrilateral to image coordinates. It was placed by eye on a frame, **not measured**,
-and the output shows it:
+Practical read: `0.50 / 10` gives the most stable tracks and would be right if you only
+care about confidently-tracked vehicles; `0.25 / 30` trades some stability for ~14% more
+coverage. Going below 0.25 buys nothing. Crossing counts stayed at 2 in / 1 out across all
+three — the vehicles that actually cross the line are large and confidently detected, so
+the counter is insensitive to these knobs.
 
-![Annotated frame](outputs/media/annotated_frame.jpg)
+*Still a proxy:* a real ID-switch count needs ground-truth tracks and MOTA/IDF1, which
+this clip doesn't have.
 
-The labelled speeds (~53–64 km/h) are implausibly low for free-flowing motorway traffic,
-which points to the assumed 30 m depth being a significant underestimate of the road
-stretch actually spanned by that quad — under-estimating real-world distance
-under-estimates speed proportionally. Treat the speed figures as a demonstration that the
-homography pipeline works end-to-end, **not** as measurements. Fixing this needs a known
-real-world reference in frame (measured lane markings, a GPS-tracked vehicle).
+### Speed estimation
 
-That frame also shows a second honest limitation: several vehicles near the gantry aren't
-detected at all. 4K footage is downscaled to 640 px for inference, so distant vehicles
-shrink to a handful of pixels — the classic small-object problem, and the same reason
-VisDrone is hard. Higher inference resolution or tiled (SAHI) inference is the fix.
+Median **122.9 km/h** across tracked vehicles — plausible for free-flowing motorway, and
+the first thing to check before trusting any of it.
+
+Run 1 reported 53–64 km/h because its calibration quad was placed by eye and assumed 7 m ×
+30 m of road. The measured region for this clip is **25 m × 250 m**
+([`outputs/calib.json`](outputs/calib.json), from
+[supervision's speed-estimation example](https://github.com/roboflow/supervision/tree/develop/examples/speed_estimation)).
+Distance error propagates linearly into speed, so under-measuring the road by ~8× under-
+reported every speed by ~8×.
+
+The pipeline also now discards points that fall outside the calibrated quad — a homography
+extrapolates confident nonsense beyond the region it was fitted on.
+
+**This calibration is valid for this camera only.** Any other footage needs its own
+measured road quad, or the speeds will be wrong in exactly the same way.
 
 ### Auto-labeling with Grounding DINO
 
-Zero-shot boxes from the text prompt `"car. truck. bus. motorcycle."` — no training, no
-manual annotation:
+37 zero-shot boxes across 6 frames from the text prompt `"car. truck. bus. motorcycle."` —
+no training, no manual annotation:
 
 ![Auto-labeling preview](outputs/media/autolabel_preview.jpg)
 
-Output is written in YOLO format, ready for import into CVAT for human correction. The
-correction pass itself — and the "how much faster is correcting than drawing from
-scratch?" timing — is genuinely manual work and hasn't been done yet; it's listed below.
+Output is YOLO-format, ready for CVAT import. The human correction pass — and the "how
+much faster is correcting than drawing from scratch?" timing — is genuinely manual and
+hasn't been done yet.
 
 ## Definition of done
 
-- [x] Pipeline code + Gradio app + auto-labeling + fine-tune notebook all written and pushed
-- [x] `run_all_colab.ipynb` executed end-to-end on GPU, artifacts downloaded and committed
-- [x] Real VisDrone fine-tune numbers + trained weights published
-- [x] Baseline comparison investigated — and documented as invalid rather than quoted
-- [ ] A *valid* pretrained baseline via label-space remapping (see Results)
-- [ ] Longer training schedule, since 20 epochs ended before the model stopped improving
+- [x] Pipeline code + Gradio app + auto-labeling + fine-tune notebook written and pushed
+- [x] `run_all_colab.ipynb` executed end-to-end on GPU, artifacts committed
+- [x] VisDrone fine-tune trained to convergence (50 epochs) + weights published
+- [x] **Valid** pretrained baseline via label-space remapping — ~11× gain, defensible
+- [x] Speed calibration against a measured road region (122.9 km/h median, plausible)
+- [x] Resolution ablation showing 1280 px cuts track fragmentation, not just adds detections
+- [x] Tracker sweep with metrics that can actually distinguish the competing explanations
+- [x] Every run-1 error documented in [LEARNINGS.md](LEARNINGS.md)
+- [ ] Gradio app verified live + deployed to a Hugging Face Space
 - [ ] Benchmark table (YOLO26 vs YOLO11 vs RT-DETR) in this README
-- [ ] Speed calibration against a measured real-world reference
 - [ ] Own footage (not just the bundled demo video) run through the pipeline
 - [ ] CVAT correction pass + auto-label-vs-scratch timing
-- [ ] Blog post: the auto-labeling workflow and the label-space bug
+- [ ] Blog post: the label-space bug and the auto-labeling workflow

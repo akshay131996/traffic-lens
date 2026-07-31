@@ -2,7 +2,7 @@ task: detect
 mode: train
 model: yolo26n.pt
 data: VisDrone.yaml
-epochs: 20
+epochs: 50
 time: null
 patience: 100
 batch: 16
@@ -12,7 +12,7 @@ save_period: -1
 cache: false
 device: ''
 workers: 8
-project: /workspace/traffic-lens/traffic_lens_run
+project: /workspace/traffic-lens/traffic_lens_run_v2
 name: visdrone_finetune
 exist_ok: false
 pretrained: true
@@ -32,6 +32,7 @@ profile: false
 freeze: null
 multi_scale: 0.0
 compile: false
+channels_last: false
 overlap_mask: true
 mask_ratio: 4
 dropout: 0.0
@@ -112,4 +113,4 @@ auto_augment: randaugment
 erasing: 0.4
 cfg: null
 tracker: tracktrack.yaml
-save_dir: /workspace/traffic-lens/traffic_lens_run/visdrone_finetune
+save_dir: /workspace/traffic-lens/traffic_lens_run_v2/visdrone_finetune

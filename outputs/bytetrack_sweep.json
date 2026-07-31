@@ -2,21 +2,27 @@
   {
     "track_activation_threshold": 0.5,
     "lost_track_buffer": 10,
-    "total_unique_ids": 7,
+    "unique_ids": 8,
+    "detections_per_frame": 4.28,
+    "mean_track_length_frames": 106.9,
     "in_count": 2,
     "out_count": 1
   },
   {
     "track_activation_threshold": 0.25,
     "lost_track_buffer": 30,
-    "total_unique_ids": 13,
+    "unique_ids": 12,
+    "detections_per_frame": 4.88,
+    "mean_track_length_frames": 81.3,
     "in_count": 2,
     "out_count": 1
   },
   {
     "track_activation_threshold": 0.1,
     "lost_track_buffer": 60,
-    "total_unique_ids": 14,
+    "unique_ids": 12,
+    "detections_per_frame": 4.92,
+    "mean_track_length_frames": 82.0,
     "in_count": 2,
     "out_count": 1
   }

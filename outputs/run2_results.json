@@ -1,0 +1,93 @@
+{
+  "run": 2,
+  "resolution_comparison": {
+    "imgsz_640": {
+      "in_count": 1,
+      "out_count": 1,
+      "total_unique_ids": 13,
+      "detections_per_frame": 3.1,
+      "mean_track_length_frames": 47.8,
+      "median_speed_kmh": 124.1,
+      "output_path": "/workspace/traffic-lens/traffic_lens_run_v2/annotated_640.mp4",
+      "has_speed": true,
+      "imgsz": 640
+    },
+    "imgsz_1280": {
+      "in_count": 1,
+      "out_count": 2,
+      "total_unique_ids": 12,
+      "detections_per_frame": 4.88,
+      "mean_track_length_frames": 81.3,
+      "median_speed_kmh": 122.9,
+      "output_path": "/workspace/traffic-lens/traffic_lens_run_v2/annotated_1280.mp4",
+      "has_speed": true,
+      "imgsz": 1280
+    }
+  },
+  "bytetrack_sweep": [
+    {
+      "track_activation_threshold": 0.5,
+      "lost_track_buffer": 10,
+      "unique_ids": 8,
+      "detections_per_frame": 4.28,
+      "mean_track_length_frames": 106.9,
+      "in_count": 2,
+      "out_count": 1
+    },
+    {
+      "track_activation_threshold": 0.25,
+      "lost_track_buffer": 30,
+      "unique_ids": 12,
+      "detections_per_frame": 4.88,
+      "mean_track_length_frames": 81.3,
+      "in_count": 2,
+      "out_count": 1
+    },
+    {
+      "track_activation_threshold": 0.1,
+      "lost_track_buffer": 60,
+      "unique_ids": 12,
+      "detections_per_frame": 4.92,
+      "mean_track_length_frames": 82.0,
+      "in_count": 2,
+      "out_count": 1
+    }
+  ],
+  "autolabel": {
+    "frames": 6,
+    "boxes": 37
+  },
+  "visdrone": {
+    "epochs": 50,
+    "baseline_remapped_shared_classes": {
+      "mAP50": 0.027571453060440423,
+      "mAP50_95": 0.012583065912023135
+    },
+    "finetuned_shared_classes": {
+      "mAP50": 0.3200092266420232,
+      "mAP50_95": 0.17570732586506038
+    },
+    "finetuned_all_classes": {
+      "mAP50": 0.28052250308947374,
+      "mAP50_95": 0.15409114281401448,
+      "precision": 0.4021232570726837,
+      "recall": 0.3079982341383921
+    },
+    "run1_invalid_baseline": {
+      "mAP50": 0.0174,
+      "mAP50_95": 0.0081,
+      "why_invalid": "COCO class indices scored against VisDrone indices"
+    }
+  },
+  "app_test": {
+    "in_count": 1,
+    "out_count": 2,
+    "total_unique_ids": 10,
+    "detections_per_frame": 5.01,
+    "mean_track_length_frames": 60.1,
+    "median_speed_kmh": 125.9,
+    "output_path": "/workspace/traffic-lens/traffic_lens_run_v2/app_test_output.mp4",
+    "has_speed": true,
+    "imgsz": 1280
+  }
+}

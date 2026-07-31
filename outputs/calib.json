@@ -1,0 +1,39 @@
+{
+  "source_px": [
+    [
+      1252,
+      787
+    ],
+    [
+      2298,
+      803
+    ],
+    [
+      5039,
+      2159
+    ],
+    [
+      -550,
+      2159
+    ]
+  ],
+  "target_m": [
+    [
+      0,
+      0
+    ],
+    [
+      24,
+      0
+    ],
+    [
+      24,
+      249
+    ],
+    [
+      0,
+      249
+    ]
+  ],
+  "note": "measured road region for supervision's vehicles.mp4 (25m x 250m), from roboflow/supervision examples/speed_estimation"
+}
