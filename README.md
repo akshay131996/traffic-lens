@@ -1,7 +1,12 @@
 # Project 2 — Traffic Lens 🚗
 
-**Roadmap week 2.** Vehicle detection → tracking → counting → (calibrated) speed, plus
-the 2026 auto-labeling workflow. This is where your YOLOv5 knowledge gets upgraded.
+Vehicle detection → tracking → line-crossing counts → calibrated speed estimates, plus a
+foundation-model auto-labeling workflow and a YOLO26 fine-tune on VisDrone.
+
+![Traffic Lens demo](outputs/media/traffic_demo.gif)
+
+*YOLO26n + ByteTrack on 4K motorway footage: per-vehicle IDs, motion traces, a
+line-crossing counter, and homography-derived speed labels.*
 
 ## Lessons
 
@@ -75,14 +80,135 @@ Extract frames from any video for labeling:
 
 ## Results
 
-_Run `run_all_colab.ipynb` and paste the real numbers here: ByteTrack sweep table,
-VisDrone pretrained-vs-fine-tuned mAP, in/out counts from the calibrated run._
+All numbers below come from one end-to-end run of
+[`run_all_colab.ipynb`](run_all_colab.ipynb) (committed **with its outputs**, so you can
+read the actual run without re-executing it) on an **NVIDIA RTX 4000 Ada (20 GB)**,
+Ultralytics 8.4.104 / torch 2.4.1+cu124.
+
+### VisDrone fine-tune
+
+YOLO26n fine-tuned on [VisDrone2019-DET](https://github.com/VisDrone/VisDrone-Dataset)
+(6,471 train / 548 val images, 10 classes), 20 epochs, imgsz 640, batch 16, ~23 min:
+
+| metric | value |
+|---|---|
+| mAP50 | **0.246** |
+| mAP50-95 | **0.134** |
+| precision | 0.364 |
+| recall | 0.292 |
+
+Weights: [`yolo26n_visdrone_finetuned.pt`](yolo26n_visdrone_finetuned.pt) (5.4 MB) ·
+per-epoch metrics: [`outputs/visdrone/results.csv`](outputs/visdrone/results.csv) ·
+full training config: [`outputs/visdrone/args.yaml`](outputs/visdrone/args.yaml)
+
+![Training curves](outputs/visdrone/results.png)
+
+**The run wasn't finished learning.** Both val losses are still declining and mAP is
+still climbing at epoch 20 — training stopped because the 20-epoch cosine schedule
+decayed the LR to ~4e-5, not because the model plateaued. Train and val losses track each
+other closely throughout (no overfitting), so a longer schedule would very likely score
+higher. 20 epochs was a deliberate budget choice, not a converged result.
+
+For reference, absolute numbers on VisDrone are *supposed* to look low — it's drone
+imagery full of tiny, densely-packed objects, and this is the smallest model in the
+family. Here's what it actually predicts:
+
+![VisDrone predictions](outputs/visdrone/val_batch0_pred.jpg)
+
+### ⚠️ The baseline in `visdrone_finetune_summary.json` is invalid — here's why
+
+The notebook also evaluated the **COCO-pretrained** YOLO26n on VisDrone val and recorded
+0.0174 mAP50, which would imply fine-tuning bought a ~14× improvement. **That comparison
+does not hold up, and the number should not be quoted.**
+
+The giveaway is in the per-class breakdown of that eval, which lists:
+
+```
+person, bicycle, car, motorcycle, airplane, bus, train, truck, boat, traffic light
+```
+
+Those are **COCO's** class names. VisDrone's are `pedestrian, people, bicycle, car, van,
+truck, tricycle, awning-tricycle, bus, motor`. The evaluation scored COCO *class indices*
+against VisDrone *ground-truth indices* — so "airplane" predictions (COCO idx 4) were
+graded against VisDrone's **van** boxes, "train" (idx 6) against **tricycle**, "boat"
+(idx 8) against **bus**. Nine of the ten rows are comparing unrelated categories, and
+0.0174 mostly measures that mismatch rather than any domain gap.
+
+The one pair that accidentally lines up semantically is index 0 — COCO *person* vs
+VisDrone *pedestrian* — and it scored **0.124 mAP50**, roughly 7× the bogus aggregate.
+That's the only interpretable signal in the baseline, and it suggests genuine zero-shot
+transfer is far better than 0.0174, while still well short of the fine-tuned model.
+
+A defensible baseline would require remapping VisDrone ground truth into COCO's label
+space (`pedestrian`+`people`→person, `car`+`van`→car, `motor`→motorcycle, `bus`→bus,
+`truck`→truck, `bicycle`→bicycle) and dropping the classes with no COCO equivalent
+(`tricycle`, `awning-tricycle`). That's left as future work — deliberately not papered
+over with a number I can't defend.
+
+**Takeaway:** a suspiciously catastrophic baseline is usually a bug in your evaluation,
+not a discovery about your model. Always check that your predictions and your ground
+truth live in the same label space before believing a comparison.
+
+### ByteTrack parameter sweep
+
+Same 200-frame clip, three tracker configurations
+([`outputs/bytetrack_sweep.json`](outputs/bytetrack_sweep.json)):
+
+| `track_activation_threshold` | `lost_track_buffer` | unique IDs | in / out |
+|---|---|---|---|
+| 0.50 | 10 | 7 | 2 / 1 |
+| 0.25 | 30 | 13 | 2 / 1 |
+| 0.10 | 60 | 14 | 2 / 1 |
+
+**What this does and doesn't show.** Unique-ID count is *not* an ID-switch metric:
+lowering the activation threshold admits more marginal detections, so some of the extra
+IDs are genuinely additional (distant, low-confidence) vehicles rather than a stable track
+being fragmented. Separating the two needs ground-truth track annotations and a proper
+MOTA/IDF1 evaluation, which this demo clip doesn't have. The stable in/out counts across
+all three settings are reassuring — the vehicles that actually cross the line are large
+and confidently detected, so the counter is insensitive to these knobs.
+
+### Speed calibration — estimated, and probably wrong
+
+[`outputs/calib_demo.json`](outputs/calib_demo.json) maps an assumed 7 m × 30 m road
+quadrilateral to image coordinates. It was placed by eye on a frame, **not measured**,
+and the output shows it:
+
+![Annotated frame](outputs/media/annotated_frame.jpg)
+
+The labelled speeds (~53–64 km/h) are implausibly low for free-flowing motorway traffic,
+which points to the assumed 30 m depth being a significant underestimate of the road
+stretch actually spanned by that quad — under-estimating real-world distance
+under-estimates speed proportionally. Treat the speed figures as a demonstration that the
+homography pipeline works end-to-end, **not** as measurements. Fixing this needs a known
+real-world reference in frame (measured lane markings, a GPS-tracked vehicle).
+
+That frame also shows a second honest limitation: several vehicles near the gantry aren't
+detected at all. 4K footage is downscaled to 640 px for inference, so distant vehicles
+shrink to a handful of pixels — the classic small-object problem, and the same reason
+VisDrone is hard. Higher inference resolution or tiled (SAHI) inference is the fix.
+
+### Auto-labeling with Grounding DINO
+
+Zero-shot boxes from the text prompt `"car. truck. bus. motorcycle."` — no training, no
+manual annotation:
+
+![Auto-labeling preview](outputs/media/autolabel_preview.jpg)
+
+Output is written in YOLO format, ready for import into CVAT for human correction. The
+correction pass itself — and the "how much faster is correcting than drawing from
+scratch?" timing — is genuinely manual work and hasn't been done yet; it's listed below.
 
 ## Definition of done
 
 - [x] Pipeline code + Gradio app + auto-labeling + fine-tune notebook all written and pushed
-- [ ] `run_all_colab.ipynb` executed end-to-end, artifacts downloaded and committed
-- [ ] Real VisDrone pretrained-vs-fine-tuned mAP numbers in the Results section above
+- [x] `run_all_colab.ipynb` executed end-to-end on GPU, artifacts downloaded and committed
+- [x] Real VisDrone fine-tune numbers + trained weights published
+- [x] Baseline comparison investigated — and documented as invalid rather than quoted
+- [ ] A *valid* pretrained baseline via label-space remapping (see Results)
+- [ ] Longer training schedule, since 20 epochs ended before the model stopped improving
 - [ ] Benchmark table (YOLO26 vs YOLO11 vs RT-DETR) in this README
-- [ ] Own footage (not just the bundled demo video) run through the pipeline at least once
-- [ ] Blog post #2: the auto-labeling workflow with honest numbers
+- [ ] Speed calibration against a measured real-world reference
+- [ ] Own footage (not just the bundled demo video) run through the pipeline
+- [ ] CVAT correction pass + auto-label-vs-scratch timing
+- [ ] Blog post: the auto-labeling workflow and the label-space bug

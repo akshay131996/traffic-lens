@@ -1,0 +1,23 @@
+[
+  {
+    "track_activation_threshold": 0.5,
+    "lost_track_buffer": 10,
+    "total_unique_ids": 7,
+    "in_count": 2,
+    "out_count": 1
+  },
+  {
+    "track_activation_threshold": 0.25,
+    "lost_track_buffer": 30,
+    "total_unique_ids": 13,
+    "in_count": 2,
+    "out_count": 1
+  },
+  {
+    "track_activation_threshold": 0.1,
+    "lost_track_buffer": 60,
+    "total_unique_ids": 14,
+    "in_count": 2,
+    "out_count": 1
+  }
+]

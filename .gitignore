@@ -4,6 +4,9 @@
 *.onnx
 bus.jpg
 
+# ...except the fine-tuned checkpoint, which is a deliverable of this project
+!yolo26n_visdrone_finetuned.pt
+
 # auto-labeling output (regenerate via autolabel.py)
 autolabel_dataset/
 autolabel_frames/
