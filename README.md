@@ -8,6 +8,12 @@ foundation-model auto-labeling workflow and a YOLO26 fine-tune on VisDrone.
 *YOLO26n + ByteTrack on 4K motorway footage: per-vehicle IDs, motion traces, a
 line-crossing counter, and homography-derived speed labels.*
 
+> 📓 **[LEARNINGS.md](LEARNINGS.md) — five silent bugs in run 1, and how each was caught.**
+> The first pass of this project ran end-to-end without a single error and still produced
+> wrong results: a baseline that measured label-space mismatch instead of model quality,
+> speeds off by ~8×, and a tracking metric that couldn't answer its own question. None of
+> them threw an exception. That write-up is the most useful thing in this repo.
+
 ## Lessons
 
 1. **What changed in YOLO since v5** (interview staple): anchor boxes died (v8 went anchor-free), then NMS died (v10/YOLO26 are trained end-to-end with one-to-one label assignment, so no duplicate-box cleanup step). Result: simpler pipelines, faster CPU/edge inference. The API you remember (`model(image)`) survived.
@@ -79,6 +85,11 @@ Extract frames from any video for labeling:
 5. Deploy `app.py` to a Hugging Face Space for a live demo link.
 
 ## Results
+
+> ⏳ **These are run-1 numbers.** A corrected run (v2 notebook: valid remapped baseline,
+> measured calibration, 1280 px inference, 50 epochs) is in progress — see
+> [LEARNINGS.md](LEARNINGS.md) for what changed and why. The invalid-baseline section
+> below is kept deliberately, because the bug is more instructive than the number.
 
 All numbers below come from one end-to-end run of
 [`run_all_colab.ipynb`](run_all_colab.ipynb) (committed **with its outputs**, so you can
