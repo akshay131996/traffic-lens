@@ -3,6 +3,9 @@
 Vehicle detection → tracking → line-crossing counts → calibrated speed estimates, plus a
 foundation-model auto-labeling workflow and a YOLO26 fine-tune on VisDrone.
 
+**📊 [Read the full write-up online](https://akshay131996.github.io/traffic-lens/)** — results,
+figures and the five silent bugs, rendered as a page.
+
 ![Traffic Lens demo](outputs/media/traffic_demo.gif)
 
 *YOLO26n + ByteTrack on 4K motorway footage: per-vehicle IDs, motion traces, a
@@ -74,7 +77,7 @@ Extract frames from any video for labeling:
 | `app.py` | Gradio app: upload a video, get an annotated one back, built on `process_video()` |
 | `autolabel.py` | Grounding-DINO auto-labeling — text prompt in, YOLO-format labels out |
 | `benchmark.py` | YOLO26 vs YOLO11 (vs RT-DETR) latency benchmark |
-| `calib_demo.json` | Estimated speed-calibration (from the notebook, downloaded back — see Results) |
+| `outputs/calib.json` | The measured speed-calibration quad for this clip — 25 m × 250 m (see Results) |
 
 ## 🔨 Your turn
 
